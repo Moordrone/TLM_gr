@@ -12,11 +12,11 @@ setup(
     name="tlm-graphene-thz",
     version="1.0.0",
     author="Your Name",
-    author_email="your.email@example.com",
+    author_email="s.eladraoui@gmail.com",
     description="TLM simulation of graphene sheets in the terahertz range",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/YOUR_USERNAME/tlm-graphene-thz",
+    url="https://github.com/Moordrone/tlm-graphene-thz",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",

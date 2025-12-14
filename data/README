@@ -1,0 +1,28 @@
+# Data Directory
+
+This directory is for storing simulation results and output files.
+
+## Subdirectories
+
+- `results/` - Simulation output files (CSV, JSON)
+
+## File Formats
+
+### CSV Export
+```
+Frequency_THz,R,T,A
+0.1,0.123,0.456,0.321
+...
+```
+
+### JSON Export
+```json
+{
+  "fermi_energy_eV": 0.4,
+  "relaxation_time_s": 1e-13,
+  "frequency_THz": [...],
+  "R": [...],
+  "T": [...],
+  "A": [...]
+}
+```

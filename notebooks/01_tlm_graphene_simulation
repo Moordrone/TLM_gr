@@ -1,0 +1,392 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# TLM Simulation of Graphene Sheet in THz Range\n",
+    "\n",
+    "[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/YOUR_USERNAME/tlm-graphene-thz/blob/main/notebooks/01_tlm_graphene_simulation.ipynb)\n",
+    "\n",
+    "This notebook demonstrates the Transmission Line Matrix (TLM) simulation for calculating reflection (R), transmission (T), and absorption (A) coefficients of a graphene sheet in the terahertz frequency range.\n",
+    "\n",
+    "## Physical Model\n",
+    "\n",
+    "The graphene conductivity is modeled using the **Drude model**:\n",
+    "\n",
+    "$$\\sigma(\\omega) = \\frac{e^2 E_F}{\\pi \\hbar^2} \\cdot \\frac{i}{\\omega + i/\\tau}$$\n",
+    "\n",
+    "Where:\n",
+    "- $E_F$: Fermi energy\n",
+    "- $\\tau$: Relaxation time\n",
+    "- $\\omega$: Angular frequency"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 1. Setup and Installation"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Check if running in Colab\n",
+    "import sys\n",
+    "IN_COLAB = 'google.colab' in sys.modules\n",
+    "\n",
+    "if IN_COLAB:\n",
+    "    # Clone the repository\n",
+    "    !git clone https://github.com/YOUR_USERNAME/tlm-graphene-thz.git\n",
+    "    %cd tlm-graphene-thz\n",
+    "    \n",
+    "    # Install dependencies\n",
+    "    !pip install -q numpy scipy matplotlib tqdm\n",
+    "    \n",
+    "    print(\"✅ Setup complete!\")\n",
+    "else:\n",
+    "    # Local execution - assume we're in the notebooks folder\n",
+    "    import os\n",
+    "    if os.path.basename(os.getcwd()) == 'notebooks':\n",
+    "        os.chdir('..')\n",
+    "    print(\"Running locally\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Import libraries\n",
+    "import numpy as np\n",
+    "import matplotlib.pyplot as plt\n",
+    "\n",
+    "# Import our modules\n",
+    "from src.graphene_model import GrapheneDrude, graphene_RTA_analytical\n",
+    "from src.simulation import GrapheneTLMSimulation\n",
+    "from src.visualization import plot_RTA, create_summary_figure\n",
+    "\n",
+    "# Plot settings\n",
+    "plt.rcParams['figure.dpi'] = 100\n",
+    "plt.rcParams['font.size'] = 11\n",
+    "\n",
+    "print(\"✅ Imports successful!\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 2. Graphene Parameters\n",
+    "\n",
+    "Define the graphene properties:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# ========================================\n",
+    "# 🔧 MODIFY THESE PARAMETERS\n",
+    "# ========================================\n",
+    "\n",
+    "# Fermi energy (typical: 0.1 - 1.0 eV)\n",
+    "FERMI_ENERGY = 0.4  # eV\n",
+    "\n",
+    "# Relaxation time (typical: 10 - 1000 fs)\n",
+    "RELAXATION_TIME = 100e-15  # seconds (100 fs)\n",
+    "\n",
+    "# Frequency range\n",
+    "FREQ_MIN = 0.1e12  # Hz (0.1 THz)\n",
+    "FREQ_MAX = 10e12   # Hz (10 THz)\n",
+    "N_FREQ = 200       # Number of frequency points\n",
+    "\n",
+    "# ========================================\n",
+    "\n",
+    "print(f\"Simulation Parameters:\")\n",
+    "print(f\"  Fermi energy: {FERMI_ENERGY} eV\")\n",
+    "print(f\"  Relaxation time: {RELAXATION_TIME*1e15:.1f} fs\")\n",
+    "print(f\"  Frequency range: {FREQ_MIN/1e12:.1f} - {FREQ_MAX/1e12:.1f} THz\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 3. Graphene Conductivity Model"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Create graphene model\n",
+    "graphene = GrapheneDrude(\n",
+    "    fermi_energy=FERMI_ENERGY,\n",
+    "    relaxation_time=RELAXATION_TIME\n",
+    ")\n",
+    "\n",
+    "print(f\"Graphene model: {graphene}\")\n",
+    "print(f\"Plasma frequency: {graphene.plasma_frequency()/1e12:.2f} THz\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Plot conductivity spectrum\n",
+    "freq = np.linspace(FREQ_MIN, FREQ_MAX, N_FREQ)\n",
+    "sigma = graphene.conductivity(freq)\n",
+    "\n",
+    "fig, axes = plt.subplots(1, 2, figsize=(12, 4))\n",
+    "\n",
+    "# Real part\n",
+    "axes[0].plot(freq/1e12, np.real(sigma)*1e3, 'b-', linewidth=2)\n",
+    "axes[0].set_xlabel('Frequency (THz)')\n",
+    "axes[0].set_ylabel('Re(σ) (mS)')\n",
+    "axes[0].set_title('Real Conductivity')\n",
+    "axes[0].grid(True, alpha=0.3)\n",
+    "\n",
+    "# Imaginary part\n",
+    "axes[1].plot(freq/1e12, np.imag(sigma)*1e3, 'r-', linewidth=2)\n",
+    "axes[1].set_xlabel('Frequency (THz)')\n",
+    "axes[1].set_ylabel('Im(σ) (mS)')\n",
+    "axes[1].set_title('Imaginary Conductivity')\n",
+    "axes[1].grid(True, alpha=0.3)\n",
+    "\n",
+    "fig.suptitle(f'Graphene Drude Conductivity (E_F = {FERMI_ENERGY} eV, τ = {RELAXATION_TIME*1e15:.0f} fs)')\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 4. TLM Simulation"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Create and run simulation\n",
+    "sim = GrapheneTLMSimulation(\n",
+    "    freq_range=(FREQ_MIN, FREQ_MAX),\n",
+    "    n_freq=N_FREQ,\n",
+    "    fermi_energy=FERMI_ENERGY,\n",
+    "    relaxation_time=RELAXATION_TIME,\n",
+    "    method='analytical'  # Use 'tlm' for full time-domain simulation\n",
+    ")\n",
+    "\n",
+    "# Run simulation\n",
+    "results = sim.run(verbose=True)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Plot R, T, A coefficients\n",
+    "sim.plot_coefficients(figsize=(14, 4))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Plot all on single axes\n",
+    "sim.plot_all_in_one(figsize=(10, 6))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 5. Results Analysis"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Maximum absorption\n",
+    "A_max, f_max = results.max_absorption()\n",
+    "print(f\"Maximum Absorption: {A_max:.2%}\")\n",
+    "print(f\"At frequency: {f_max:.2f} THz\")\n",
+    "\n",
+    "# Energy conservation check\n",
+    "print(f\"\\nEnergy conservation (R+T+A=1): {results.verify_energy_conservation()}\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Summary figure\n",
+    "fig = create_summary_figure(results, figsize=(14, 10))\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 6. Effect of Fermi Energy"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Compare different Fermi energies\n",
+    "fermi_energies = [0.2, 0.4, 0.6, 0.8, 1.0]\n",
+    "\n",
+    "fig, axes = plt.subplots(1, 3, figsize=(14, 4))\n",
+    "colors = plt.cm.viridis(np.linspace(0, 1, len(fermi_energies)))\n",
+    "\n",
+    "for i, ef in enumerate(fermi_energies):\n",
+    "    R, T, A = graphene_RTA_analytical(freq, ef, RELAXATION_TIME)\n",
+    "    \n",
+    "    axes[0].plot(freq/1e12, R, color=colors[i], linewidth=2, label=f'{ef} eV')\n",
+    "    axes[1].plot(freq/1e12, T, color=colors[i], linewidth=2)\n",
+    "    axes[2].plot(freq/1e12, A, color=colors[i], linewidth=2)\n",
+    "\n",
+    "for ax, title in zip(axes, ['Reflection R', 'Transmission T', 'Absorption A']):\n",
+    "    ax.set_xlabel('Frequency (THz)')\n",
+    "    ax.set_ylabel(title)\n",
+    "    ax.set_xlim(0, 10)\n",
+    "    ax.set_ylim(0, 1)\n",
+    "    ax.grid(True, alpha=0.3)\n",
+    "\n",
+    "axes[0].legend(title='Fermi Energy', loc='best')\n",
+    "fig.suptitle(f'Effect of Fermi Energy (τ = {RELAXATION_TIME*1e15:.0f} fs)')\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 7. Effect of Relaxation Time"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Compare different relaxation times\n",
+    "relaxation_times = [10e-15, 50e-15, 100e-15, 500e-15, 1000e-15]  # 10 fs to 1 ps\n",
+    "\n",
+    "fig, axes = plt.subplots(1, 3, figsize=(14, 4))\n",
+    "colors = plt.cm.plasma(np.linspace(0, 1, len(relaxation_times)))\n",
+    "\n",
+    "for i, tau in enumerate(relaxation_times):\n",
+    "    R, T, A = graphene_RTA_analytical(freq, FERMI_ENERGY, tau)\n",
+    "    \n",
+    "    axes[0].plot(freq/1e12, R, color=colors[i], linewidth=2, label=f'{tau*1e15:.0f} fs')\n",
+    "    axes[1].plot(freq/1e12, T, color=colors[i], linewidth=2)\n",
+    "    axes[2].plot(freq/1e12, A, color=colors[i], linewidth=2)\n",
+    "\n",
+    "for ax, title in zip(axes, ['Reflection R', 'Transmission T', 'Absorption A']):\n",
+    "    ax.set_xlabel('Frequency (THz)')\n",
+    "    ax.set_ylabel(title)\n",
+    "    ax.set_xlim(0, 10)\n",
+    "    ax.set_ylim(0, 1)\n",
+    "    ax.grid(True, alpha=0.3)\n",
+    "\n",
+    "axes[0].legend(title='Relaxation Time', loc='best')\n",
+    "fig.suptitle(f'Effect of Relaxation Time (E_F = {FERMI_ENERGY} eV)')\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 8. Export Results"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Save to CSV\n",
+    "results.save_csv('graphene_RTA_results.csv')\n",
+    "print(\"Results saved to graphene_RTA_results.csv\")\n",
+    "\n",
+    "# Display first few lines\n",
+    "import pandas as pd\n",
+    "df = pd.read_csv('graphene_RTA_results.csv')\n",
+    "print(\"\\nFirst 5 rows:\")\n",
+    "df.head()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 📚 References\n",
+    "\n",
+    "1. Christopoulos, C. (1995). *The Transmission-Line Modeling Method: TLM*. IEEE Press.\n",
+    "2. Falkovsky, L. A. (2008). Optical properties of graphene. *Journal of Physics: Conference Series*, 129, 012004.\n",
+    "3. Hanson, G. W. (2008). Dyadic Green's functions for a surface conductivity model of graphene. *Journal of Applied Physics*, 103(6), 064302."
+   ]
+  }
+ ],
+ "metadata": {
+  "accelerator": "GPU",
+  "colab": {
+   "provenance": [],
+   "toc_visible": true
+  },
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.10.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}

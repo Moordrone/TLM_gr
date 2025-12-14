@@ -1,0 +1,474 @@
+"""
+TLM Core Functions
+==================
+
+Implementation of the 1D Transmission Line Matrix (TLM) method
+for electromagnetic wave simulation.
+
+The TLM method discretizes Maxwell's equations using a network of
+transmission lines. Each time step consists of:
+    1. Scattering at nodes
+    2. Connection between adjacent nodes
+    3. Application of boundary conditions
+
+Reference:
+    Christopoulos, C. (1995). The Transmission-Line Modeling Method: TLM.
+    IEEE Press.
+"""
+
+import numpy as np
+from typing import Optional, Tuple
+
+
+class TLMGrid1D:
+    """
+    1D TLM grid for electromagnetic wave propagation.
+    
+    This implements a shunt-node TLM for TM mode propagation with
+    two voltage pulses per node (left and right traveling).
+    
+    Parameters
+    ----------
+    n_cells : int
+        Number of TLM cells
+    dx : float
+        Spatial step size in meters
+    dt : float, optional
+        Time step (default: dx/c for stability)
+    
+    Attributes
+    ----------
+    V_left : ndarray
+        Left-traveling voltage pulses
+    V_right : ndarray
+        Right-traveling voltage pulses
+    E_field : ndarray
+        Electric field at nodes
+    
+    Examples
+    --------
+    >>> grid = TLMGrid1D(n_cells=1000, dx=1e-6)
+    >>> grid.init_gaussian_pulse(center=100, width=20)
+    >>> for _ in range(500):
+    ...     grid.scatter()
+    ...     grid.connect()
+    ...     grid.apply_boundary()
+    """
+    
+    # Physical constants
+    C0 = 299792458.0        # Speed of light [m/s]
+    Z0 = 376.730313668      # Free space impedance [Ohm]
+    EPS0 = 8.8541878128e-12 # Vacuum permittivity [F/m]
+    MU0 = 1.25663706212e-6  # Vacuum permeability [H/m]
+    
+    def __init__(self, n_cells: int = 1000, dx: float = 1e-6, 
+                 dt: Optional[float] = None):
+        """
+        Initialize TLM grid.
+        
+        Parameters
+        ----------
+        n_cells : int
+            Number of cells
+        dx : float
+            Spatial step [m]
+        dt : float, optional
+            Time step [s], default = dx/c
+        """
+        self.n_cells = n_cells
+        self.dx = dx
+        self.dt = dt if dt is not None else dx / self.C0
+        
+        # Check CFL stability condition
+        if self.dt > dx / self.C0:
+            raise ValueError(f"Time step dt={self.dt} violates CFL condition")
+        
+        # Initialize pulse arrays
+        self.V_left = np.zeros(n_cells)   # Left-traveling pulses
+        self.V_right = np.zeros(n_cells)  # Right-traveling pulses
+        
+        # Temporary storage for connection step
+        self._V_left_new = np.zeros(n_cells)
+        self._V_right_new = np.zeros(n_cells)
+        
+        # Derived quantities
+        self.E_field = np.zeros(n_cells)
+        self.H_field = np.zeros(n_cells)
+        
+        # Time tracking
+        self.time_step = 0
+        self.time = 0.0
+        
+        # Graphene interface (if any)
+        self.graphene_index = None
+        self.graphene_reflection_coef = 0.0
+        
+    def init_clear(self):
+        """Reset all fields to zero."""
+        self.V_left.fill(0)
+        self.V_right.fill(0)
+        self.E_field.fill(0)
+        self.H_field.fill(0)
+        self.time_step = 0
+        self.time = 0.0
+    
+    def init_gaussian_pulse(self, center: int, width: float, 
+                            amplitude: float = 1.0, direction: str = 'right'):
+        """
+        Initialize with a Gaussian pulse.
+        
+        Parameters
+        ----------
+        center : int
+            Center cell index
+        width : float
+            Pulse width in cells
+        amplitude : float
+            Peak amplitude
+        direction : str
+            'right', 'left', or 'both'
+        """
+        x = np.arange(self.n_cells)
+        pulse = amplitude * np.exp(-((x - center) / width)**2)
+        
+        if direction in ['right', 'both']:
+            self.V_right = pulse.copy()
+        if direction in ['left', 'both']:
+            self.V_left = pulse.copy()
+    
+    def init_sinusoidal(self, frequency: float, n_cycles: int = 5,
+                        start_cell: int = 50):
+        """
+        Initialize with a sinusoidal pulse (modulated by Gaussian).
+        
+        Parameters
+        ----------
+        frequency : float
+            Carrier frequency in Hz
+        n_cycles : int
+            Number of cycles in the pulse
+        start_cell : int
+            Starting cell for the pulse
+        """
+        wavelength_cells = self.C0 / (frequency * self.dx)
+        pulse_width = n_cycles * wavelength_cells
+        
+        x = np.arange(self.n_cells)
+        k = 2 * np.pi / wavelength_cells
+        
+        # Gaussian-modulated sinusoid
+        envelope = np.exp(-((x - start_cell - pulse_width/2) / (pulse_width/4))**2)
+        carrier = np.sin(k * (x - start_cell))
+        
+        pulse = envelope * carrier
+        pulse[x < start_cell] = 0
+        
+        self.V_right = pulse.copy()
+    
+    def scatter(self):
+        """
+        Perform scattering operation at all nodes.
+        
+        For a simple shunt node:
+            V_reflected = (V_left_inc + V_right_inc) / 2
+        
+        The scattered pulses are computed from incident pulses.
+        """
+        # Total incident voltage at each node
+        V_total = self.V_left + self.V_right
+        
+        # Scattering: equal split to both directions
+        V_scattered = V_total / 2.0
+        
+        # Update pulses (reflected = scattered - incident)
+        self.V_left = V_scattered - self.V_left
+        self.V_right = V_scattered - self.V_right
+        
+        # Update E-field (proportional to node voltage)
+        self.E_field = V_total
+    
+    def connect(self):
+        """
+        Perform connection operation between adjacent nodes.
+        
+        Left-traveling pulse at node i comes from right-traveling at i+1
+        Right-traveling pulse at node i comes from left-traveling at i-1
+        """
+        # Store new values
+        self._V_left_new[:-1] = self.V_right[1:]   # From right neighbor
+        self._V_right_new[1:] = self.V_left[:-1]   # From left neighbor
+        
+        # Handle boundaries (will be overwritten by apply_boundary)
+        self._V_left_new[-1] = 0
+        self._V_right_new[0] = 0
+        
+        # Update
+        self.V_left = self._V_left_new.copy()
+        self.V_right = self._V_right_new.copy()
+        
+        # Update time
+        self.time_step += 1
+        self.time += self.dt
+    
+    def apply_boundary(self, left_type: str = 'absorbing', 
+                       right_type: str = 'absorbing'):
+        """
+        Apply boundary conditions.
+        
+        Parameters
+        ----------
+        left_type : str
+            'absorbing', 'pec' (perfect electric conductor), or 'pmc'
+        right_type : str
+            'absorbing', 'pec', or 'pmc'
+        """
+        # Left boundary
+        if left_type == 'absorbing':
+            self.V_right[0] = 0  # Absorb incoming wave
+        elif left_type == 'pec':
+            self.V_right[0] = -self.V_left[0]  # Perfect reflection with sign flip
+        elif left_type == 'pmc':
+            self.V_right[0] = self.V_left[0]   # Perfect reflection, same sign
+        
+        # Right boundary
+        if right_type == 'absorbing':
+            self.V_left[-1] = 0
+        elif right_type == 'pec':
+            self.V_left[-1] = -self.V_right[-1]
+        elif right_type == 'pmc':
+            self.V_left[-1] = self.V_right[-1]
+    
+    def set_graphene_interface(self, index: int, conductivity: complex):
+        """
+        Set up a graphene interface at specified cell.
+        
+        The graphene is modeled as a resistive boundary condition
+        using its surface conductivity.
+        
+        Parameters
+        ----------
+        index : int
+            Cell index for graphene interface
+        conductivity : complex
+            Surface conductivity in Siemens
+        """
+        self.graphene_index = index
+        
+        # Calculate reflection coefficient for graphene sheet
+        # r = -σZ₀ / (2 + σZ₀)
+        sigma_norm = conductivity * self.Z0
+        self.graphene_reflection_coef = -sigma_norm / (2 + sigma_norm)
+        self.graphene_transmission_coef = 2 / (2 + sigma_norm)
+    
+    def apply_graphene_interface(self):
+        """
+        Apply graphene boundary condition during connection.
+        
+        Must be called after connect() if graphene is present.
+        """
+        if self.graphene_index is None:
+            return
+        
+        idx = self.graphene_index
+        r = self.graphene_reflection_coef
+        t = self.graphene_transmission_coef
+        
+        # Get incident pulses at interface
+        V_inc_right = self.V_right[idx]    # Coming from left
+        V_inc_left = self.V_left[idx]      # Coming from right
+        
+        # Apply scattering at graphene interface
+        # Reflected pulses
+        self.V_left[idx] = r * V_inc_right + t * V_inc_left
+        self.V_right[idx] = t * V_inc_right + r * V_inc_left
+    
+    def add_source(self, index: int, value: float, source_type: str = 'soft'):
+        """
+        Add a source at specified cell.
+        
+        Parameters
+        ----------
+        index : int
+            Cell index
+        value : float
+            Source value
+        source_type : str
+            'soft' (additive) or 'hard' (replacement)
+        """
+        if source_type == 'soft':
+            self.V_right[index] += value
+        else:
+            self.V_right[index] = value
+    
+    def get_total_energy(self) -> float:
+        """Calculate total electromagnetic energy in the grid."""
+        return np.sum(self.V_left**2 + self.V_right**2)
+    
+    def run_steps(self, n_steps: int, 
+                  source_func=None, 
+                  record_interval: int = 1) -> dict:
+        """
+        Run simulation for specified number of steps.
+        
+        Parameters
+        ----------
+        n_steps : int
+            Number of time steps
+        source_func : callable, optional
+            Function(time_step) returning source value
+        record_interval : int
+            Record fields every N steps
+        
+        Returns
+        -------
+        history : dict
+            Dictionary with 'E_field', 'time' arrays
+        """
+        n_records = n_steps // record_interval + 1
+        history = {
+            'E_field': np.zeros((n_records, self.n_cells)),
+            'time': np.zeros(n_records),
+            'energy': np.zeros(n_records)
+        }
+        
+        record_idx = 0
+        
+        for step in range(n_steps):
+            # Add source if provided
+            if source_func is not None:
+                source_val = source_func(step)
+                self.add_source(10, source_val)
+            
+            # TLM steps
+            self.scatter()
+            self.connect()
+            self.apply_boundary()
+            
+            if self.graphene_index is not None:
+                self.apply_graphene_interface()
+            
+            # Record
+            if step % record_interval == 0:
+                history['E_field'][record_idx] = self.E_field.copy()
+                history['time'][record_idx] = self.time
+                history['energy'][record_idx] = self.get_total_energy()
+                record_idx += 1
+        
+        # Trim arrays
+        history['E_field'] = history['E_field'][:record_idx]
+        history['time'] = history['time'][:record_idx]
+        history['energy'] = history['energy'][:record_idx]
+        
+        return history
+
+
+def tlm_frequency_response(n_cells: int, graphene_sigma_func, 
+                          frequencies: np.ndarray,
+                          source_position: int = 100,
+                          graphene_position: int = 500,
+                          detector_r_position: int = 200,
+                          detector_t_position: int = 800,
+                          n_time_steps: int = 5000) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Calculate frequency response (R, T, A) using TLM time-domain simulation.
+    
+    Parameters
+    ----------
+    n_cells : int
+        Number of TLM cells
+    graphene_sigma_func : callable
+        Function(frequency) returning conductivity
+    frequencies : array
+        Frequency array in Hz
+    
+    Returns
+    -------
+    R, T, A : arrays
+        Reflection, transmission, absorption coefficients
+    """
+    from scipy.fft import fft, fftfreq
+    
+    # Results arrays
+    n_freq = len(frequencies)
+    R = np.zeros(n_freq)
+    T = np.zeros(n_freq)
+    
+    # Run broadband simulation
+    dx = 1e-6  # 1 µm cells
+    grid = TLMGrid1D(n_cells=n_cells, dx=dx)
+    
+    # Gaussian pulse (broadband)
+    grid.init_gaussian_pulse(center=source_position, width=30)
+    
+    # Reference simulation (no graphene)
+    ref_grid = TLMGrid1D(n_cells=n_cells, dx=dx)
+    ref_grid.init_gaussian_pulse(center=source_position, width=30)
+    
+    # Time signals at detectors
+    signal_r = np.zeros(n_time_steps)
+    signal_t = np.zeros(n_time_steps)
+    ref_signal = np.zeros(n_time_steps)
+    
+    # Run reference simulation
+    for step in range(n_time_steps):
+        ref_grid.scatter()
+        ref_grid.connect()
+        ref_grid.apply_boundary()
+        ref_signal[step] = ref_grid.E_field[detector_t_position]
+    
+    # For each frequency, calculate R and T
+    for i, freq in enumerate(frequencies):
+        grid.init_clear()
+        grid.init_gaussian_pulse(center=source_position, width=30)
+        
+        # Set graphene conductivity at this frequency
+        sigma = graphene_sigma_func(freq)
+        grid.set_graphene_interface(graphene_position, sigma)
+        
+        # Run simulation
+        for step in range(n_time_steps):
+            grid.scatter()
+            grid.connect()
+            grid.apply_boundary()
+            grid.apply_graphene_interface()
+            
+            signal_r[step] = grid.E_field[detector_r_position]
+            signal_t[step] = grid.E_field[detector_t_position]
+        
+        # Calculate power ratios (simplified)
+        R[i] = np.sum(signal_r**2) / np.sum(ref_signal**2)
+        T[i] = np.sum(signal_t**2) / np.sum(ref_signal**2)
+    
+    # Absorption
+    A = 1 - R - T
+    A = np.maximum(A, 0)  # Physical constraint
+    
+    return R, T, A
+
+
+if __name__ == "__main__":
+    # Quick demo
+    import matplotlib.pyplot as plt
+    
+    grid = TLMGrid1D(n_cells=500, dx=1e-6)
+    grid.init_gaussian_pulse(center=100, width=20)
+    
+    fig, axes = plt.subplots(2, 3, figsize=(12, 6))
+    
+    for idx, step in enumerate([0, 100, 200, 300, 400, 500]):
+        ax = axes[idx // 3, idx % 3]
+        
+        # Run to this step
+        while grid.time_step < step:
+            grid.scatter()
+            grid.connect()
+            grid.apply_boundary()
+        
+        ax.plot(grid.E_field)
+        ax.set_title(f'Step {step}')
+        ax.set_xlabel('Cell')
+        ax.set_ylabel('E-field')
+        ax.set_ylim(-1.5, 1.5)
+    
+    plt.tight_layout()
+    plt.show()

@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""
+Basic Graphene TLM Simulation Example
+=====================================
+
+Simple example showing how to calculate R, T, A for graphene
+in the THz range using the TLM method.
+
+Run with: python examples/basic_simulation.py
+"""
+
+import sys
+import os
+
+# Add src to path (for running from examples folder)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+from src.simulation import GrapheneTLMSimulation
+from src.graphene_model import GrapheneDrude
+
+
+def main():
+    print("=" * 50)
+    print("TLM Graphene Simulation - Basic Example")
+    print("=" * 50)
+    
+    # =============================================
+    # 1. Define parameters
+    # =============================================
+    fermi_energy = 0.4       # eV
+    relaxation_time = 100e-15  # 100 fs
+    freq_min = 0.1e12        # 0.1 THz
+    freq_max = 10e12         # 10 THz
+    n_freq = 200
+    
+    print(f"\nParameters:")
+    print(f"  Fermi energy: {fermi_energy} eV")
+    print(f"  Relaxation time: {relaxation_time*1e15:.0f} fs")
+    print(f"  Frequency range: {freq_min/1e12:.1f} - {freq_max/1e12:.1f} THz")
+    
+    # =============================================
+    # 2. Create and run simulation
+    # =============================================
+    sim = GrapheneTLMSimulation(
+        freq_range=(freq_min, freq_max),
+        n_freq=n_freq,
+        fermi_energy=fermi_energy,
+        relaxation_time=relaxation_time,
+        method='analytical'
+    )
+    
+    results = sim.run(verbose=True)
+    
+    # =============================================
+    # 3. Print results
+    # =============================================
+    A_max, f_max = results.max_absorption()
+    print(f"\nResults:")
+    print(f"  Maximum absorption: {A_max:.1%}")
+    print(f"  At frequency: {f_max:.2f} THz")
+    print(f"  Energy conservation: {'✓' if results.verify_energy_conservation() else '✗'}")
+    
+    # =============================================
+    # 4. Plot results
+    # =============================================
+    print("\nGenerating plots...")
+    
+    # Plot R, T, A
+    fig, ax = plt.subplots(figsize=(10, 6))
+    freq = results.frequency_THz
+    
+    ax.plot(freq, results.R, 'b-', linewidth=2, label='Reflection R')
+    ax.plot(freq, results.T, 'g-', linewidth=2, label='Transmission T')
+    ax.plot(freq, results.A, 'r-', linewidth=2, label='Absorption A')
+    
+    ax.set_xlabel('Frequency (THz)', fontsize=12)
+    ax.set_ylabel('Coefficient', fontsize=12)
+    ax.set_title(f'Graphene R, T, A Coefficients\n'
+                f'E_F = {fermi_energy} eV, τ = {relaxation_time*1e15:.0f} fs')
+    ax.legend(loc='best')
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 1)
+    
+    plt.tight_layout()
+    plt.savefig('graphene_RTA.png', dpi=150)
+    print("  Saved: graphene_RTA.png")
+    
+    # =============================================
+    # 5. Export data
+    # =============================================
+    results.save_csv('graphene_results.csv')
+    print("  Saved: graphene_results.csv")
+    
+    # Show plot
+    plt.show()
+    
+    print("\n✅ Done!")
+
+
+if __name__ == "__main__":
+    main()

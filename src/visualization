@@ -1,0 +1,383 @@
+"""
+Visualization Utilities
+=======================
+
+Plotting functions for TLM graphene simulation results.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
+from typing import Optional, Tuple, Dict
+
+
+def plot_RTA(frequency_THz: np.ndarray, 
+             R: np.ndarray, 
+             T: np.ndarray, 
+             A: np.ndarray,
+             title: str = "Graphene R, T, A Coefficients",
+             figsize: Tuple[int, int] = (10, 6),
+             save_path: Optional[str] = None) -> Tuple:
+    """
+    Plot reflection, transmission, and absorption coefficients.
+    
+    Parameters
+    ----------
+    frequency_THz : array
+        Frequency in THz
+    R, T, A : arrays
+        Coefficients
+    title : str
+        Plot title
+    figsize : tuple
+        Figure size
+    save_path : str, optional
+        Save path
+    
+    Returns
+    -------
+    fig, ax : matplotlib objects
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    ax.plot(frequency_THz, R, 'b-', linewidth=2, label='Reflection (R)')
+    ax.plot(frequency_THz, T, 'g-', linewidth=2, label='Transmission (T)')
+    ax.plot(frequency_THz, A, 'r-', linewidth=2, label='Absorption (A)')
+    
+    # Verify energy conservation
+    total = R + T + A
+    ax.plot(frequency_THz, total, 'k--', linewidth=1, alpha=0.5, label='R+T+A')
+    
+    ax.set_xlabel('Frequency (THz)', fontsize=12)
+    ax.set_ylabel('Coefficient', fontsize=12)
+    ax.set_title(title, fontsize=14)
+    ax.set_xlim(frequency_THz[0], frequency_THz[-1])
+    ax.set_ylim(0, 1.05)
+    ax.legend(loc='best', fontsize=10)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved to {save_path}")
+    
+    return fig, ax
+
+
+def plot_parametric_map(results: Dict,
+                        quantity: str = 'A_max',
+                        figsize: Tuple[int, int] = (10, 8),
+                        save_path: Optional[str] = None) -> Tuple:
+    """
+    Plot 2D parametric map of maximum absorption.
+    
+    Parameters
+    ----------
+    results : dict
+        Results from parametric_study()
+    quantity : str
+        'A_max' or 'f_A_max'
+    figsize : tuple
+        Figure size
+    save_path : str, optional
+        Save path
+    
+    Returns
+    -------
+    fig, ax : matplotlib objects
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    ef = results['fermi_energies']
+    tau = results['relaxation_times'] * 1e15  # Convert to fs
+    data = results[quantity]
+    
+    if quantity == 'A_max':
+        label = 'Maximum Absorption'
+        cmap = 'hot'
+        vmin, vmax = 0, np.max(data)
+    else:
+        label = 'Frequency of Max Absorption (THz)'
+        cmap = 'viridis'
+        vmin, vmax = np.min(data), np.max(data)
+    
+    # Create meshgrid
+    TAU, EF = np.meshgrid(tau, ef)
+    
+    # Plot
+    c = ax.pcolormesh(TAU, EF, data, cmap=cmap, shading='auto',
+                      vmin=vmin, vmax=vmax)
+    
+    ax.set_xlabel('Relaxation Time τ (fs)', fontsize=12)
+    ax.set_ylabel('Fermi Energy E_F (eV)', fontsize=12)
+    ax.set_title(f'Graphene Parametric Study: {label}', fontsize=14)
+    
+    # Colorbar
+    cbar = plt.colorbar(c, ax=ax)
+    cbar.set_label(label, fontsize=11)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    
+    return fig, ax
+
+
+def plot_fermi_energy_comparison(frequency_THz: np.ndarray,
+                                  fermi_energies: list,
+                                  relaxation_time: float,
+                                  figsize: Tuple[int, int] = (12, 4)) -> Tuple:
+    """
+    Compare R, T, A for different Fermi energies.
+    
+    Parameters
+    ----------
+    frequency_THz : array
+        Frequency in THz
+    fermi_energies : list
+        List of Fermi energies to compare
+    relaxation_time : float
+        Fixed relaxation time in seconds
+    
+    Returns
+    -------
+    fig, axes : matplotlib objects
+    """
+    from .graphene_model import graphene_RTA_analytical
+    
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
+    
+    freq_Hz = frequency_THz * 1e12
+    
+    colors = plt.cm.viridis(np.linspace(0, 1, len(fermi_energies)))
+    
+    for i, ef in enumerate(fermi_energies):
+        R, T, A = graphene_RTA_analytical(freq_Hz, ef, relaxation_time)
+        
+        axes[0].plot(frequency_THz, R, color=colors[i], 
+                    linewidth=2, label=f'E_F = {ef} eV')
+        axes[1].plot(frequency_THz, T, color=colors[i], linewidth=2)
+        axes[2].plot(frequency_THz, A, color=colors[i], linewidth=2)
+    
+    titles = ['Reflection R', 'Transmission T', 'Absorption A']
+    for ax, title in zip(axes, titles):
+        ax.set_xlabel('Frequency (THz)', fontsize=11)
+        ax.set_ylabel('Coefficient', fontsize=11)
+        ax.set_title(title, fontsize=12)
+        ax.set_xlim(frequency_THz[0], frequency_THz[-1])
+        ax.set_ylim(0, 1)
+        ax.grid(True, alpha=0.3)
+    
+    axes[0].legend(loc='best', fontsize=9)
+    
+    fig.suptitle(f'Effect of Fermi Energy (τ = {relaxation_time*1e15:.0f} fs)',
+                fontsize=13)
+    plt.tight_layout()
+    
+    return fig, axes
+
+
+def plot_relaxation_time_comparison(frequency_THz: np.ndarray,
+                                     fermi_energy: float,
+                                     relaxation_times: list,
+                                     figsize: Tuple[int, int] = (12, 4)) -> Tuple:
+    """
+    Compare R, T, A for different relaxation times.
+    
+    Parameters
+    ----------
+    frequency_THz : array
+        Frequency in THz
+    fermi_energy : float
+        Fixed Fermi energy in eV
+    relaxation_times : list
+        List of relaxation times in seconds
+    
+    Returns
+    -------
+    fig, axes : matplotlib objects
+    """
+    from .graphene_model import graphene_RTA_analytical
+    
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
+    
+    freq_Hz = frequency_THz * 1e12
+    
+    colors = plt.cm.plasma(np.linspace(0, 1, len(relaxation_times)))
+    
+    for i, tau in enumerate(relaxation_times):
+        R, T, A = graphene_RTA_analytical(freq_Hz, fermi_energy, tau)
+        
+        tau_fs = tau * 1e15
+        axes[0].plot(frequency_THz, R, color=colors[i], 
+                    linewidth=2, label=f'τ = {tau_fs:.0f} fs')
+        axes[1].plot(frequency_THz, T, color=colors[i], linewidth=2)
+        axes[2].plot(frequency_THz, A, color=colors[i], linewidth=2)
+    
+    titles = ['Reflection R', 'Transmission T', 'Absorption A']
+    for ax, title in zip(axes, titles):
+        ax.set_xlabel('Frequency (THz)', fontsize=11)
+        ax.set_ylabel('Coefficient', fontsize=11)
+        ax.set_title(title, fontsize=12)
+        ax.set_xlim(frequency_THz[0], frequency_THz[-1])
+        ax.set_ylim(0, 1)
+        ax.grid(True, alpha=0.3)
+    
+    axes[0].legend(loc='best', fontsize=9)
+    
+    fig.suptitle(f'Effect of Relaxation Time (E_F = {fermi_energy} eV)',
+                fontsize=13)
+    plt.tight_layout()
+    
+    return fig, axes
+
+
+def plot_conductivity_spectrum(graphene_model,
+                               frequency_THz: np.ndarray,
+                               figsize: Tuple[int, int] = (10, 4)) -> Tuple:
+    """
+    Plot complex conductivity spectrum.
+    
+    Parameters
+    ----------
+    graphene_model : GrapheneDrude
+        Graphene model object
+    frequency_THz : array
+        Frequency in THz
+    
+    Returns
+    -------
+    fig, axes : matplotlib objects
+    """
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    
+    freq_Hz = frequency_THz * 1e12
+    sigma = graphene_model.conductivity(freq_Hz)
+    
+    # Universal conductivity for reference
+    sigma_0 = 6.08e-5  # e²/(4ℏ) in Siemens
+    
+    # Real part
+    axes[0].plot(frequency_THz, np.real(sigma) / sigma_0, 'b-', linewidth=2)
+    axes[0].set_xlabel('Frequency (THz)', fontsize=11)
+    axes[0].set_ylabel('Re(σ) / σ₀', fontsize=11)
+    axes[0].set_title('Real Conductivity', fontsize=12)
+    axes[0].grid(True, alpha=0.3)
+    
+    # Imaginary part
+    axes[1].plot(frequency_THz, np.imag(sigma) / sigma_0, 'r-', linewidth=2)
+    axes[1].set_xlabel('Frequency (THz)', fontsize=11)
+    axes[1].set_ylabel('Im(σ) / σ₀', fontsize=11)
+    axes[1].set_title('Imaginary Conductivity', fontsize=12)
+    axes[1].grid(True, alpha=0.3)
+    
+    fig.suptitle(f'Graphene Drude Conductivity ({graphene_model})', fontsize=12)
+    plt.tight_layout()
+    
+    return fig, axes
+
+
+def create_summary_figure(results, figsize: Tuple[int, int] = (14, 10),
+                          save_path: Optional[str] = None) -> plt.Figure:
+    """
+    Create a comprehensive summary figure.
+    
+    Parameters
+    ----------
+    results : SimulationResults
+        Simulation results object
+    figsize : tuple
+        Figure size
+    save_path : str, optional
+        Save path
+    
+    Returns
+    -------
+    fig : matplotlib Figure
+    """
+    fig = plt.figure(figsize=figsize)
+    
+    # Grid layout
+    gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
+    
+    freq = results.frequency_THz
+    
+    # Main R, T, A plot (large, top)
+    ax1 = fig.add_subplot(gs[0, :])
+    ax1.plot(freq, results.R, 'b-', linewidth=2, label='R')
+    ax1.plot(freq, results.T, 'g-', linewidth=2, label='T')
+    ax1.plot(freq, results.A, 'r-', linewidth=2, label='A')
+    ax1.set_xlabel('Frequency (THz)')
+    ax1.set_ylabel('Coefficient')
+    ax1.set_title(f'Graphene R, T, A (E_F = {results.fermi_energy} eV, '
+                 f'τ = {results.relaxation_time*1e15:.0f} fs)')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.set_xlim(freq[0], freq[-1])
+    ax1.set_ylim(0, 1)
+    
+    # Individual plots
+    ax2 = fig.add_subplot(gs[1, 0])
+    ax2.fill_between(freq, 0, results.R, alpha=0.7, color='blue')
+    ax2.set_xlabel('Frequency (THz)')
+    ax2.set_ylabel('Reflection R')
+    ax2.set_xlim(freq[0], freq[-1])
+    ax2.set_ylim(0, max(0.5, results.R.max() * 1.1))
+    ax2.grid(True, alpha=0.3)
+    
+    ax3 = fig.add_subplot(gs[1, 1])
+    ax3.fill_between(freq, 0, results.T, alpha=0.7, color='green')
+    ax3.set_xlabel('Frequency (THz)')
+    ax3.set_ylabel('Transmission T')
+    ax3.set_xlim(freq[0], freq[-1])
+    ax3.set_ylim(0, 1)
+    ax3.grid(True, alpha=0.3)
+    
+    ax4 = fig.add_subplot(gs[1, 2])
+    ax4.fill_between(freq, 0, results.A, alpha=0.7, color='red')
+    ax4.set_xlabel('Frequency (THz)')
+    ax4.set_ylabel('Absorption A')
+    ax4.set_xlim(freq[0], freq[-1])
+    ax4.set_ylim(0, max(0.5, results.A.max() * 1.1))
+    ax4.grid(True, alpha=0.3)
+    
+    # Mark maximum absorption
+    A_max, f_max = results.max_absorption()
+    ax4.axvline(f_max, color='darkred', linestyle='--', alpha=0.5)
+    ax4.annotate(f'Max: {A_max:.1%}\n@ {f_max:.2f} THz',
+                xy=(f_max, A_max), xytext=(f_max + 1, A_max * 0.8),
+                fontsize=9, arrowprops=dict(arrowstyle='->', color='red'))
+    
+    # Conductivity plots
+    ax5 = fig.add_subplot(gs[2, 0])
+    ax5.plot(freq, np.real(results.sigma) * 1e3, 'b-', linewidth=2)
+    ax5.set_xlabel('Frequency (THz)')
+    ax5.set_ylabel('Re(σ) (mS)')
+    ax5.set_title('Real Conductivity')
+    ax5.grid(True, alpha=0.3)
+    
+    ax6 = fig.add_subplot(gs[2, 1])
+    ax6.plot(freq, np.imag(results.sigma) * 1e3, 'r-', linewidth=2)
+    ax6.set_xlabel('Frequency (THz)')
+    ax6.set_ylabel('Im(σ) (mS)')
+    ax6.set_title('Imaginary Conductivity')
+    ax6.grid(True, alpha=0.3)
+    
+    # Energy conservation check
+    ax7 = fig.add_subplot(gs[2, 2])
+    total = results.R + results.T + results.A
+    ax7.plot(freq, total, 'k-', linewidth=2)
+    ax7.axhline(1.0, color='green', linestyle='--', alpha=0.5)
+    ax7.set_xlabel('Frequency (THz)')
+    ax7.set_ylabel('R + T + A')
+    ax7.set_title('Energy Conservation')
+    ax7.set_ylim(0.98, 1.02)
+    ax7.grid(True, alpha=0.3)
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Summary figure saved to {save_path}")
+    
+    return fig
